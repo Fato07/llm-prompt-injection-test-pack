@@ -9,25 +9,27 @@ From the repository root with Python 3.10 or later, run the loopback demo, stric
 ```sh
 python3 run_probes.py --self-test
 python3 run_probes.py --strict --suite fixtures/suite.json \
-  --evidence fixtures/observations.json --json-out report-strict.json
+  --evidence fixtures/observations.json --expect-run reference-v2 --json-out report-strict.json
 python3 -m unittest discover -s tests -v
+python3 -m examples.reference_evidence
 python3 -m examples.offline_proof
 ```
 
-The strict reference artifact is [examples/strict-gate.json](examples/strict-gate.json). The proof script makes local, temporary copies of the reference observations, alters one recorded outcome at a time, and compares the existing diagnostic marker rule against the strict gate. It uses the same synthetic case observations for both scores. The report contains no response bodies. [Proof results](examples/proof-results.json)
+The strict reference artifact is [examples/strict-gate.json](examples/strict-gate.json). The reference generator produces synthetic evidence, including approval observations from an in-memory fake sink. The proof script varies one scenario at a time. Where a case has a marker assertion, both modes inspect the same visible text for the same private marker. The diagnostic has no oracle for task completion or sink effects, so those comparisons are labeled unsupported. [Proof results](examples/proof-results.json)
 
 | Scenario | Diagnostic marker rule | Strict result |
 | --- | --- | --- |
-| Reference, with the approval denied and no sink effect | `PASS` | All required outcomes held, exit `0` |
-| Public quotation with a marker configured as forbidden in the legacy rule | `FAIL` | Legitimate result and private-data assertion held, exit `0` |
-| Unrelated response to a legitimate task | `PASS` | Utility failed, exit `1` |
-| Synthetic effect recorded after denial | `PASS` | Policy violation, exit `1` |
-| Sink effect missing | `PASS` | Evidence incomplete, exit `2` |
+| Reference, with the approval denied and no sink effect | Unsupported | All required outcomes held, exit `0` |
+| Public quotation with the same private marker policy in both modes | `PASS` | Legitimate result and private-data assertion held, exit `0` |
+| Unrelated response to a legitimate task | Unsupported | Utility failed, exit `1` |
+| Synthetic effect recorded after denial | Unsupported | Policy violation, exit `1` |
+| Allowed action writes the wrong fake record | Unsupported | Sink state violation, exit `1` |
+| Sink snapshot missing | Unsupported | Evidence incomplete, exit `2` |
 | Private synthetic marker observed at the visible surface | `FAIL` | Policy violation, exit `1` |
 
-This comparison measures scorer behavior on known synthetic observations. The actions and state in the approval and tenant examples are fixture data. Product verification depends on evidence from the application's own test harness. The CI workflow runs the same fixtures and contract tests with the standard library.
+This comparison measures scorer behavior on known synthetic observations. The public quotation illustrates why an assertion must identify the private marker. Configuring the public phrase as the forbidden marker would test a different policy. Product verification depends on evidence from the application's own test harness. The CI workflow runs the same fixtures and contract tests with the standard library.
 
-The local release check used fresh copies of the changes over base commit `18be285d4de24deaa3debd108ae4a7b93fc8a0f6`. All 12 tests passed on Python 3.10.20 and 3.14.7. The strict CLI returned the expected `0`, `1`, and `2` process statuses, and both example artifacts reproduced byte-for-byte on both interpreters.
+The contract tests cover stale run IDs, changed suite bytes, wrong-record effects, malformed evidence, and legacy diagnostic compatibility. The checked-in reference files use LF so Git line-ending conversion does not change their digests.
 
 ## Publication and independent validation
 

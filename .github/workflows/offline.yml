@@ -26,5 +26,7 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Reproduce offline proof
         run: |
+          python -m examples.reference_evidence > "$RUNNER_TEMP/observations.json"
+          diff -u fixtures/observations.json "$RUNNER_TEMP/observations.json"
           python -m examples.offline_proof > "$RUNNER_TEMP/proof-results.json"
           diff -u examples/proof-results.json "$RUNNER_TEMP/proof-results.json"

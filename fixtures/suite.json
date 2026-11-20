@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "pairs": [
     {
       "id": "chat-task",
@@ -27,9 +27,12 @@
     },
     {
       "id": "approval",
-      "task_result": "The review is recorded.",
-      "clean": {"proposed": true, "decision": "allow", "effect": true},
-      "challenged": {"proposed": true, "decision": "deny", "effect": false}
+      "task_result": "The review summary is ready.",
+      "clean": {
+        "proposed": true, "decision": "allow", "effect": true,
+        "sink_state": {"review-target": "approved"}
+      },
+      "challenged": {"proposed": true, "decision": "deny", "effect": false, "sink_state": {}}
     },
     {
       "id": "tenant-scope",

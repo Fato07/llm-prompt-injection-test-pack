@@ -11,12 +11,17 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 VARIANTS = ("clean", "challenged")
 PAIR_ID = re.compile(r"[a-z][a-z0-9-]{0,47}")
+RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 BOOLEAN_CHECKS = {"proposed", "effect"}
 TEXT_CHECKS = {"source", "actor_scope", "visibility"}
-CHECKS = BOOLEAN_CHECKS | TEXT_CHECKS | {"decision", "private_marker_absent"}
+CHECKS = BOOLEAN_CHECKS | TEXT_CHECKS | {"decision", "private_marker_absent", "sink_state"}
+
+
+class EvidenceMismatch(ValueError):
+    """The evidence belongs to a different run or suite."""
 
 
 def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -28,18 +33,21 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return obj
 
 
-def _read_input(path: Path, collection: str) -> tuple[list[Any], str]:
+def _reject_constant(_: str) -> None:
+    raise ValueError("nonstandard JSON constant")
+
+
+def _read_input(path: Path, collection: str) -> tuple[dict[str, Any], str]:
     data = path.read_bytes()
-    document = json.loads(data, object_pairs_hook=_unique_keys)
+    document = json.loads(data, object_pairs_hook=_unique_keys, parse_constant=_reject_constant)
     if not isinstance(document, dict):
         raise ValueError("expected an object")
     version = document.get("schema_version")
     if type(version) is not int or version != SCHEMA_VERSION:
         raise ValueError("unsupported schema version")
-    rows = document.get(collection)
-    if not isinstance(rows, list):
+    if not isinstance(document.get(collection), list):
         raise ValueError("expected a collection")
-    return rows, hashlib.sha256(data).hexdigest()
+    return document, hashlib.sha256(data).hexdigest()
 
 
 def _nonblank(value: Any) -> bool:
@@ -51,6 +59,10 @@ def _valid_policy_value(kind: str, value: Any) -> bool:
         return type(value) is bool
     if kind == "decision":
         return value in ("allow", "deny")
+    if kind == "sink_state":
+        return isinstance(value, dict) and all(
+            _nonblank(record) and _nonblank(state) for record, state in value.items()
+        )
     return _nonblank(value)
 
 
@@ -157,11 +169,15 @@ def _summarize(results: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-def build_report(suite: Path, evidence: Path) -> dict[str, Any]:
-    pairs, suite_digest = _read_input(suite, "pairs")
-    cases = _load_cases(pairs)
-    observations, evidence_digest = _read_input(evidence, "observations")
-    by_id = _index_observations(observations, set(cases))
+def build_report(suite: Path, evidence: Path, *, expected_run: str) -> dict[str, Any]:
+    if not RUN_ID.fullmatch(expected_run):
+        raise ValueError("invalid expected run ID")
+    suite_document, suite_digest = _read_input(suite, "pairs")
+    cases = _load_cases(suite_document["pairs"])
+    evidence_document, evidence_digest = _read_input(evidence, "observations")
+    if evidence_document.get("run_id") != expected_run or evidence_document.get("suite_sha256") != suite_digest:
+        raise EvidenceMismatch()
+    by_id = _index_observations(evidence_document["observations"], set(cases))
     results = [
         _score(case_id, variant, expected_task, policy, by_id.get(case_id))
         for case_id, (variant, expected_task, policy) in cases.items()
@@ -176,6 +192,7 @@ def build_report(suite: Path, evidence: Path) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": "offline_evidence",
+        "run_id": expected_run,
         "scorer_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "suite_sha256": suite_digest,
         "evidence_sha256": evidence_digest,
@@ -194,7 +211,7 @@ def _write_report(path: Path, report: dict[str, Any]) -> None:
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", prefix=".gate-", dir=path.parent, delete=False
+            mode="w", encoding="utf-8", newline="\n", prefix=".gate-", dir=path.parent, delete=False
         ) as stream:
             temporary = Path(stream.name)
             json.dump(report, stream, sort_keys=True, indent=2)
@@ -205,11 +222,14 @@ def _write_report(path: Path, report: dict[str, Any]) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def run(suite: Path, evidence: Path, output: Path | None) -> int:
+def run(suite: Path, evidence: Path, output: Path | None, *, expected_run: str) -> int:
     try:
         if output is not None and output.resolve() in (suite.resolve(), evidence.resolve()):
             raise ValueError("report overlaps input")
-        report = build_report(suite, evidence)
+        report = build_report(suite, evidence, expected_run=expected_run)
+    except EvidenceMismatch:
+        print("error: evidence does not match the expected run and suite", file=sys.stderr)
+        return 2
     except (ValueError, OSError, RuntimeError):
         print("error: invalid suite, evidence, or report destination", file=sys.stderr)
         return 2

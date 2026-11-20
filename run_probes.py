@@ -220,7 +220,7 @@ class MockHandler(BaseHTTPRequestHandler):
         chat: list[dict[str, str]] = []
         for m in messages:
             role = m.get("role") or "user"
-            content = m.get("content") or ""
+            content = message_text(m.get("content"))
             if role == "system":
                 system = content if not system else system + "\n" + content
             else:
@@ -251,6 +251,29 @@ def start_mock(host: str = "127.0.0.1", port: int = 0) -> ThreadingHTTPServer:
     return server
 
 
+def valid_probe_message(message: Any) -> bool:
+    if not isinstance(message, dict):
+        return False
+    role = message.get("role")
+    if role not in ("system", "developer", "user", "assistant", "tool", "function"):
+        return False
+    content = message.get("content")
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        return bool(content) and all(
+            isinstance(part, dict)
+            and isinstance(part.get("type"), str)
+            and part["type"].strip()
+            and (part["type"] != "text" or isinstance(part.get("text"), str))
+            for part in content
+        )
+    return content is None and role == "assistant" and (
+        (isinstance(message.get("tool_calls"), list) and bool(message["tool_calls"]))
+        or (isinstance(message.get("function_call"), dict) and bool(message["function_call"]))
+    )
+
+
 def load_probes(path: Path) -> list[dict[str, Any]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list) or not data:
@@ -270,18 +293,30 @@ def load_probes(path: Path) -> list[dict[str, Any]]:
             not isinstance(marker, str) or not marker.strip() for marker in markers
         ):
             raise ValueError("invalid marker assertions")
-        messages = probe.get("messages")
-        if not isinstance(messages, list) or not messages or any(
-            not isinstance(message, dict)
-            or not isinstance(message.get("role"), str)
-            or not message["role"].strip()
-            or "content" not in message
-            for message in messages
-        ):
-            raise ValueError("invalid messages")
-        if "system" in probe and not isinstance(probe["system"], str):
+        system = probe.get("system")
+        if system is not None and not isinstance(system, str):
             raise ValueError("invalid system message")
+        messages = probe.get("messages")
+        if messages is None:
+            messages = []
+        if not isinstance(messages, list) or any(not valid_probe_message(message) for message in messages):
+            raise ValueError("invalid messages")
+        if not messages and not (system and system.strip()):
+            raise ValueError("probe has no messages")
     return data
+
+
+def message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    chunks = []
+    for part in content:
+        text = part.get("text") if isinstance(part, dict) else part
+        if isinstance(text, str):
+            chunks.append(text)
+    return "".join(chunks)
 
 
 def chat_complete(
@@ -324,12 +359,8 @@ def chat_complete(
     if not choices:
         raise RuntimeError("API returned no choices")
     message = choices[0].get("message") or {}
-    content = message.get("content")
-    if isinstance(content, list):
-        content = "".join(
-            part.get("text", "") if isinstance(part, dict) else str(part) for part in content
-        )
-    if not isinstance(content, str) or not content.strip():
+    content = message_text(message.get("content"))
+    if not content.strip():
         raise RuntimeError("API returned no scoreable text")
     return content
 
@@ -388,7 +419,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--probes", help="Path to a diagnostic probe array")
     p.add_argument("--timeout", type=float, default=30.0, help="Per-request timeout in seconds")
     p.add_argument("--sleep", type=float, default=0.0, help="Optional delay between probes")
-    p.add_argument("--json-out", type=Path, help="Write a diagnostic or strict JSON report")
+    p.add_argument(
+        "--json-out",
+        type=lambda value: Path(value) if value else None,
+        help="Write a diagnostic or strict JSON report",
+    )
     p.add_argument(
         "--self-test",
         action="store_true",
@@ -397,20 +432,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--strict", action="store_true", help="Gate on saved evidence without network access")
     p.add_argument("--suite", type=Path, help="Strict suite with paired workflow expectations")
     p.add_argument("--evidence", type=Path, help="Saved synthetic workflow observations")
+    p.add_argument("--expect-run", help="Trusted run ID to match against the evidence")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.strict:
-        if not args.suite or not args.evidence or args.self_test or args.base_url or args.probes or args.api_key:
-            print("error: --strict requires --suite and --evidence and accepts no endpoint or credentials", file=sys.stderr)
+        if not (args.suite and args.evidence and args.expect_run) or (
+            args.self_test or args.base_url or args.probes or args.api_key
+        ):
+            print(
+                "error: --strict requires --suite, --evidence, and --expect-run and accepts no endpoint or credentials",
+                file=sys.stderr,
+            )
             return 2
         from regression_gate import run
 
-        return run(args.suite, args.evidence, args.json_out)
-    if args.suite or args.evidence:
-        print("error: --suite and --evidence require --strict", file=sys.stderr)
+        return run(args.suite, args.evidence, args.json_out, expected_run=args.expect_run)
+    if args.suite or args.evidence or args.expect_run:
+        print("error: --suite, --evidence, and --expect-run require --strict", file=sys.stderr)
         return 2
     if not args.base_url and not args.self_test:
         print("error: --base-url is required, or pass --self-test", file=sys.stderr)

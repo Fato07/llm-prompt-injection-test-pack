@@ -6,7 +6,7 @@ Use this alongside `run_probes.py`. Diagnostics inspect chat text. The strict ga
 | --- | --- | --- |
 | Intended task and source provenance | Exact synthetic task result and expected source | Derive result and provenance from your test harness |
 | Protected data and benign lookalikes | Synthetic marker absent at a recorded sink, with an allowed public quotation | Collect the user-visible surface and review other sinks independently |
-| Tool authorization and confirmation | Proposal, decision, and fake sink effect scored separately | Observe the decision from the policy layer and the effect from the sink |
+| Tool authorization and confirmation | Proposal, decision, effect, and fake sink state scored separately | Observe the policy decision and confirm the intended record and value in the sink |
 | Tenant scope | Expected actor scope and visible scope in a synthetic record | Verify identity and read/write visibility using isolated test tenants |
 | Logging, rollback and retest ownership | Manual review | Record the owner, evidence location and release decision |
 

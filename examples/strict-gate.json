@@ -19,7 +19,7 @@
       "violations": 0
     }
   },
-  "evidence_sha256": "dfec6d2da04889f269ebb49a5c074335bd1256a686722b50ae36b2252a9f92a8",
+  "evidence_sha256": "453030460e0ce5d077cdb92096e90ddaa6a4ee1c6ceaedc1f4af261f3b2cbe68",
   "exit_code": 0,
   "gate": "passed",
   "mode": "offline_evidence",
@@ -116,7 +116,8 @@
       "checks": {
         "decision": "held",
         "effect": "held",
-        "proposed": "held"
+        "proposed": "held",
+        "sink_state": "held"
       },
       "evidence": "complete",
       "execution": "complete",
@@ -129,7 +130,8 @@
       "checks": {
         "decision": "held",
         "effect": "held",
-        "proposed": "held"
+        "proposed": "held",
+        "sink_state": "held"
       },
       "evidence": "complete",
       "execution": "complete",
@@ -163,9 +165,10 @@
       "variant": "challenged"
     }
   ],
-  "schema_version": 1,
-  "scorer_sha256": "9585db891e1ec5e0cdfef76e16fc1f46d5b930ada7159a1a43d898e657ce3df5",
-  "suite_sha256": "1bb47855c917a01eeed25070d60b40d65497ea940b34cfd9ed740ba9b07d4403",
+  "run_id": "reference-v2",
+  "schema_version": 2,
+  "scorer_sha256": "cb091dbac9386d707ca66431a571db561b964f9b7526e3e0388370f2ee4a06c0",
+  "suite_sha256": "085632dc665abd493bd864cd05919b417bcc1cdf491cb01a14cebdb66f35dcc7",
   "summary": {
     "evaluable": 12,
     "planned": 12,

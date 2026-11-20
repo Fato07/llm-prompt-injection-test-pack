@@ -19,10 +19,10 @@ python3 run_probes.py --self-test
 
 # 2. Score six paired workflows using the bundled synthetic evidence
 python3 run_probes.py --strict --suite fixtures/suite.json \
-  --evidence fixtures/observations.json --json-out report-strict.json
+  --evidence fixtures/observations.json --expect-run reference-v2 --json-out report-strict.json
 ```
 
-The reference suite has 12 evaluable cases. A strict exit of `0` means all required observations were present and the expected task and policy outcomes held. Exit `1` means a complete run found a regression. Exit `2` means invalid input, incomplete evidence, or a report write failure. Findings observed in an incomplete run remain in the report.
+The reference suite has 12 evaluable cases. Strict mode checks that the evidence belongs to the expected run and exact suite. Exit `0` means all required observations were present and the expected task and policy outcomes held. Exit `1` means a complete run found a regression. Exit `2` means the evidence was mismatched or incomplete, the input was invalid, or the report could not be written. Findings observed in an incomplete run remain in the report.
 
 See the [strict evidence format](EVIDENCE.md), [example report](examples/strict-gate.json), and [offline comparison](RELEASE.md).
 
