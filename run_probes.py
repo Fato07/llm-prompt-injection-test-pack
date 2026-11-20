@@ -6,14 +6,15 @@ Stdlib only. Example:
     python3 run_probes.py --self-test
     python3 run_probes.py --base-url http://127.0.0.1:8000/v1 --model mock --api-key test
 
-Exit codes: 0 = the run finished (findings are printed, not treated as a process error),
-2 = the pack itself failed (bad args, unreachable API, or request errors on every probe).
+Diagnostic exit codes: 0 = completed with at least one scored reply, 2 = invalid or no scored replies.
+Use --strict with saved workflow evidence for release gating.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import threading
@@ -254,6 +255,32 @@ def load_probes(path: Path) -> list[dict[str, Any]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list) or not data:
         raise ValueError(f"{path} must be a non-empty JSON array of probes")
+    ids = set()
+    for probe in data:
+        if not isinstance(probe, dict) or any(
+            not isinstance(probe.get(key), str) or not probe[key].strip()
+            for key in ("id", "category", "name")
+        ):
+            raise ValueError("invalid probe metadata")
+        if probe["id"] in ids:
+            raise ValueError("duplicate probe ID")
+        ids.add(probe["id"])
+        markers = probe.get("fail_if_any")
+        if not isinstance(markers, list) or not markers or any(
+            not isinstance(marker, str) or not marker.strip() for marker in markers
+        ):
+            raise ValueError("invalid marker assertions")
+        messages = probe.get("messages")
+        if not isinstance(messages, list) or not messages or any(
+            not isinstance(message, dict)
+            or not isinstance(message.get("role"), str)
+            or not message["role"].strip()
+            or "content" not in message
+            for message in messages
+        ):
+            raise ValueError("invalid messages")
+        if "system" in probe and not isinstance(probe["system"], str):
+            raise ValueError("invalid system message")
     return data
 
 
@@ -264,6 +291,8 @@ def chat_complete(
     system: str,
     messages: list[dict[str, str]],
     timeout: float,
+    *,
+    direct: bool = False,
 ) -> str:
     url = base_url.rstrip("/") + "/chat/completions"
     body = json.dumps(
@@ -282,12 +311,15 @@ def chat_complete(
             "Authorization": f"Bearer {api_key}",
         },
     )
+    open_request = urllib.request.urlopen
+    if direct:
+        open_request = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with open_request(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")
-        raise RuntimeError(f"HTTP {exc.code} from {url}: {detail[:300]}") from exc
+        exc.close()
+        raise RuntimeError(f"HTTP {exc.code}") from None
     choices = payload.get("choices") or []
     if not choices:
         raise RuntimeError("API returned no choices")
@@ -297,9 +329,9 @@ def chat_complete(
         content = "".join(
             part.get("text", "") if isinstance(part, dict) else str(part) for part in content
         )
-    if content is None:
-        raise RuntimeError("API returned an empty message")
-    return str(content)
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("API returned no scoreable text")
+    return content
 
 
 def evaluate(probe: dict[str, Any], reply: str) -> tuple[str, list[str]]:
@@ -326,7 +358,7 @@ def print_report(results: list[dict[str, Any]]) -> None:
     print("Summary")
     print(f"  ran:    {len(results)}")
     print(f"  pass:   {counts.get('PASS', 0)}")
-    print(f"  fail:   {counts.get('FAIL', 0)}  (canary or policy break appeared in the reply)")
+    print(f"  fail:   {counts.get('FAIL', 0)}  (a configured marker appeared in the reply)")
     print(f"  error:  {counts.get('ERROR', 0)}")
     print()
     print("By category")
@@ -350,36 +382,66 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--model", default="gpt-4o-mini", help="Model name to send in the request body")
     p.add_argument(
         "--api-key",
-        default=os.environ.get("OPENAI_API_KEY", ""),
+        default=None,
         help="Bearer token (defaults to OPENAI_API_KEY)",
     )
-    p.add_argument("--probes", default=str(DEFAULT_PROBES), help="Path to probes.json")
+    p.add_argument("--probes", help="Path to a diagnostic probe array")
     p.add_argument("--timeout", type=float, default=30.0, help="Per-request timeout in seconds")
     p.add_argument("--sleep", type=float, default=0.0, help="Optional delay between probes")
-    p.add_argument("--json-out", default="", help="Write the full machine-readable report to this path")
+    p.add_argument("--json-out", type=Path, help="Write a diagnostic or strict JSON report")
     p.add_argument(
         "--self-test",
         action="store_true",
         help="Start a local leaky mock endpoint and run the pack against it",
     )
+    p.add_argument("--strict", action="store_true", help="Gate on saved evidence without network access")
+    p.add_argument("--suite", type=Path, help="Strict suite with paired workflow expectations")
+    p.add_argument("--evidence", type=Path, help="Saved synthetic workflow observations")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    server = None
-    if args.self_test:
-        server = start_mock("127.0.0.1", 0)
-        host, port = server.server_address[:2]
-        args.base_url = f"http://{host}:{port}/v1"
-        args.model = args.model or "mock-leaky"
-        args.api_key = args.api_key or "test"
-        print(f"Self-test mock listening at {args.base_url}")
-    if not args.base_url:
+    if args.strict:
+        if not args.suite or not args.evidence or args.self_test or args.base_url or args.probes or args.api_key:
+            print("error: --strict requires --suite and --evidence and accepts no endpoint or credentials", file=sys.stderr)
+            return 2
+        from regression_gate import run
+
+        return run(args.suite, args.evidence, args.json_out)
+    if args.suite or args.evidence:
+        print("error: --suite and --evidence require --strict", file=sys.stderr)
+        return 2
+    if not args.base_url and not args.self_test:
         print("error: --base-url is required, or pass --self-test", file=sys.stderr)
         return 2
+    if not math.isfinite(args.timeout) or args.timeout <= 0 or not math.isfinite(args.sleep) or args.sleep < 0:
+        print("error: timeout must be positive and delay must be nonnegative and finite", file=sys.stderr)
+        return 2
+    try:
+        probes = load_probes(Path(args.probes) if args.probes else DEFAULT_PROBES)
+    except (OSError, ValueError):
+        print("error: invalid diagnostic probes", file=sys.stderr)
+        return 2
 
-    probes = load_probes(Path(args.probes))
+    if not args.self_test:
+        if args.api_key is None:
+            args.api_key = os.environ.get("OPENAI_API_KEY")
+        args.api_key = args.api_key or "none"
+        return run_diagnostic(args, probes)
+
+    with start_mock("127.0.0.1", 0) as server:
+        host, port = server.server_address[:2]
+        args.base_url = f"http://{host}:{port}/v1"
+        args.api_key = "test"
+        print(f"Self-test mock listening at {args.base_url}")
+        try:
+            return run_diagnostic(args, probes)
+        finally:
+            server.shutdown()
+
+
+def run_diagnostic(args: argparse.Namespace, probes: list[dict[str, Any]]) -> int:
     results: list[dict[str, Any]] = []
     for probe in probes:
         record: dict[str, Any] = {
@@ -394,27 +456,31 @@ def main(argv: list[str] | None = None) -> int:
         try:
             reply = chat_complete(
                 args.base_url,
-                args.api_key or "none",
+                args.api_key,
                 args.model,
                 probe.get("system") or "",
                 probe.get("messages") or [],
                 args.timeout,
+                direct=args.self_test,
             )
             result, hits = evaluate(probe, reply)
             record.update(result=result, hits=hits, reply=reply)
-        except Exception as exc:  # noqa: BLE001 — surface any transport/parse error per probe
+        except RuntimeError as exc:
             record["error"] = str(exc)
+        except Exception as exc:  # noqa: BLE001 — report the error type without raw response data
+            record["error"] = type(exc).__name__
         results.append(record)
         if args.sleep:
             time.sleep(args.sleep)
 
     print_report(results)
-    if args.json_out:
-        Path(args.json_out).write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+    if args.json_out is not None:
+        try:
+            args.json_out.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            print("error: could not write diagnostic report", file=sys.stderr)
+            return 2
         print(f"Wrote {args.json_out}")
-
-    if server is not None:
-        server.shutdown()
 
     if all(r["result"] == "ERROR" for r in results):
         return 2
