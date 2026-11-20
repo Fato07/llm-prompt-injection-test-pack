@@ -76,8 +76,8 @@ The categories loosely follow the prompt-injection, sensitive-information-disclo
 
 ## Need more than a script?
 
-- **RedCell** — an EU-hosted, OpenAI-compatible endpoint for refusal-removed open models, for verified red-team and eval teams, with full request logs: <https://redcell-api.pages.dev>
-- **One-week LLM & agent security test** — a human-led, fixed-scope review of one app or agent with a written report and a retest of high-severity findings, from CodesDevs: <https://codesdevs.io/llm-agent-security-test/>
+- **RedCell**, an EU-hosted, OpenAI-compatible endpoint for refusal-removed open models, for verified red-team and eval teams, with full request logs: <https://redcell-api.pages.dev>
+- **One-week LLM & agent security test**, a human-led, fixed-scope review of one app or agent with a written report and a retest of high-severity findings, from CodesDevs: <https://codesdevs.io/llm-agent-security-test/>
 
 ## Contributing
 
