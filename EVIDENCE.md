@@ -48,7 +48,7 @@ Strict reports omit observed replies, marker and sink values, raw errors, and cr
 
 ## CI recipe
 
-Use the [offline GitHub Actions step](.github/workflows/offline.yml) as the starting point. It checks out the exact PR head and uses that revision, the run ID, attempt, and Python matrix version to identify the run. Rehearse the same workflow with a local checkout and a shell that has Bash. Change `pack_root` to the path of the pack if running from a consumer repository.
+Use the [offline GitHub Actions workflow](.github/workflows/offline.yml) as the starting point. Pull request runs test the proposed merge with the base branch. For an exact-head check, run the workflow manually on the branch. The expected run ID uses the checked-out revision, workflow run ID, attempt, and Python matrix version. Rehearse the recipe with a local checkout and a shell that has Bash. Set `pack_root` to the path of the pack when running from a consumer repository.
 
 ```bash
 (
@@ -65,7 +65,7 @@ Use the [offline GitHub Actions step](.github/workflows/offline.yml) as the star
 
 The reference collector creates v2 evidence for the bundled suite. For a consumer integration, replace the collector and suite with your local harness and expectations. Give the collector the run ID before it executes and have it hash the exact suite bytes it used. Pass the same CI-provided ID independently to the gate.
 
-The script creates a new private directory for each report under `RUNNER_TEMP` or the system temp directory. It prints the report path when available and preserves the scorer's exit when it writes the GitHub step summary. The summary names failed or inconclusive assertions and reports task and evidence status without exposing observed values. Exit `2` with no report means there is no current JSON artifact. Keep evidence and suite inputs out of shared CI output and discard the local temp files when finished.
+The script creates a new private directory for each report under `RUNNER_TEMP` or the system temp directory. It prints the report path when available and preserves the scorer's exit when it writes the GitHub step summary. The summary names failed or inconclusive assertions and reports task and evidence status without exposing observed values. The repository workflow uploads the fresh strict JSON file, including after a gate failure, when the scorer produced a report. Invalid or mismatched input that prevented a report from being written produces no artifact. Keep evidence and suite inputs out of shared CI output and discard the local temp files when finished.
 
 Read these report fields independently:
 

@@ -18,6 +18,10 @@ printf '%s\n' "$details"
 if [[ -f "$report" ]]; then
   report_note='A fresh strict JSON report was written.'
   printf 'Strict JSON report: %s\n' "$report"
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    printf 'report_path=%s\n' "$report" >> "$GITHUB_OUTPUT" ||
+      printf 'Could not set the strict report step output.\n' >&2
+  fi
 else
   report_note='No fresh strict JSON report was written.'
   printf '%s\n' "$report_note"

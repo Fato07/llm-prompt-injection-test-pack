@@ -34,9 +34,11 @@ class StrictCITests(unittest.TestCase):
             work = Path(directory)
             evidence = work / "evidence.json"
             summary = work / "job-summary.md"
+            outputs = work / "step-outputs.txt"
             env = {
                 **os.environ, "PYTHON": sys.executable,
                 "RUNNER_TEMP": directory, "GITHUB_STEP_SUMMARY": str(summary),
+                "GITHUB_OUTPUT": str(outputs),
             }
             scenarios = (
                 ("fresh", json.dumps(reference), run_id, 0, ("12/12 cases evaluable",), (0, 0, 0)),
@@ -52,6 +54,7 @@ class StrictCITests(unittest.TestCase):
                 with self.subTest(scenario=name):
                     evidence.write_text(contents, encoding="utf-8")
                     summary.write_text("", encoding="utf-8")
+                    outputs.write_text("", encoding="utf-8")
                     before = set(work.glob("strict-gate.*/strict-report.json"))
                     result = subprocess.run(
                         ["bash", str(ROOT / "examples/strict_ci.sh"), str(SUITE), str(evidence), expected_run],
@@ -67,10 +70,12 @@ class StrictCITests(unittest.TestCase):
                     if counts is None:
                         self.assertTrue(before)
                         self.assertFalse(new)
+                        self.assertEqual(outputs.read_text(encoding="utf-8"), "")
                         self.assertIn("No fresh strict JSON report", markdown)
                         self.assertNotIn("12/12 cases evaluable", shared)
                     else:
                         [path] = new
+                        self.assertEqual(outputs.read_text(encoding="utf-8"), f"report_path={path}\n")
                         data = path.read_text(encoding="utf-8")
                         shared += data
                         report = json.loads(data)
