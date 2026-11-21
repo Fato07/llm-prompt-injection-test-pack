@@ -18,15 +18,32 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
       - name: Test runner and scoring contracts
         run: python -m unittest discover -s tests -v
+      - name: Gate on fresh synthetic evidence
+        shell: bash
+        env:
+          PYTHON_VERSION: ${{ matrix.python }}
+        run: |
+          set -u
+          revision=$(git rev-parse HEAD)
+          run_id="$revision.$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT.py$PYTHON_VERSION"
+          evidence=$(mktemp "$RUNNER_TEMP/strict-evidence.XXXXXXXX")
+          trap 'rm -- "$evidence" || true' EXIT
+          python3 -m examples.reference_evidence --run-id "$run_id" > "$evidence"
+          bash examples/strict_ci.sh fixtures/suite.json "$evidence" "$run_id"
       - name: Reproduce offline proof
         run: |
           python -m examples.reference_evidence > "$RUNNER_TEMP/observations.json"
           diff -u fixtures/observations.json "$RUNNER_TEMP/observations.json"
           python -m examples.offline_proof > "$RUNNER_TEMP/proof-results.json"
           diff -u examples/proof-results.json "$RUNNER_TEMP/proof-results.json"
+          python run_probes.py --strict --suite fixtures/suite.json \
+            --evidence "$RUNNER_TEMP/observations.json" --expect-run reference-v2 \
+            --json-out "$RUNNER_TEMP/reference-strict-report.json"
+          diff -u examples/strict-gate.json "$RUNNER_TEMP/reference-strict-report.json"

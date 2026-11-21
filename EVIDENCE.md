@@ -46,6 +46,37 @@ A bound but incomplete run writes a report when a destination is supplied. Inval
 
 Strict reports omit observed replies, marker and sink values, raw errors, and credentials. Access to the evidence file should remain local to the test environment. The SHA-256 digests and run and case labels are safe to share for the bundled synthetic files. Review labels before exporting custom reports.
 
+## CI recipe
+
+Use the [offline GitHub Actions step](.github/workflows/offline.yml) as the starting point. It checks out the exact PR head and uses that revision, the run ID, attempt, and Python matrix version to identify the run. Rehearse the same workflow with a local checkout and a shell that has Bash. Change `pack_root` to the path of the pack if running from a consumer repository.
+
+```bash
+(
+  set -eu
+  pack_root="$PWD"
+  RUNNER_TEMP=$(mktemp -d "${TMPDIR:-/tmp}/strict-ci.XXXXXXXX")
+  export RUNNER_TEMP
+  run_id="local.$(git -C "$pack_root" rev-parse HEAD).${RUNNER_TEMP##*/}"
+  evidence="$RUNNER_TEMP/observations.json"
+  (cd "$pack_root" && python3 -m examples.reference_evidence --run-id "$run_id") > "$evidence"
+  bash "$pack_root/examples/strict_ci.sh" "$pack_root/fixtures/suite.json" "$evidence" "$run_id"
+)
+```
+
+The reference collector creates v2 evidence for the bundled suite. For a consumer integration, replace the collector and suite with your local harness and expectations. Give the collector the run ID before it executes and have it hash the exact suite bytes it used. Pass the same CI-provided ID independently to the gate.
+
+The script creates a new private directory for each report under `RUNNER_TEMP` or the system temp directory. It prints the report path when available and preserves the scorer's exit when it writes the GitHub step summary. The summary names failed or inconclusive assertions and reports task and evidence status without exposing observed values. Exit `2` with no report means there is no current JSON artifact. Keep evidence and suite inputs out of shared CI output and discard the local temp files when finished.
+
+Read these report fields independently:
+
+| Signal | Where to look |
+| --- | --- |
+| Policy failure | `security: violation` and the failing name in `checks` |
+| Task result differs from the expected result | `utility: failed` |
+| No scoreable task result was recorded | `utility: unscored` and `evidence: incomplete` |
+| A case or required observation is missing or invalid | `evidence: incomplete`, with `execution` and `checks` showing which information was usable |
+| The evidence file is invalid or its run or suite binding fails | Exit `2`, a sanitized error, and no fresh report |
+
 ## Migrating from diagnostic JSON
 
 The original diagnostic `--json-out` still produces a list of legacy verdict rows, including raw reply text. Existing consumers can stay on that format. A strict report is a separate object. Check `schema_version` and `mode`, use the process exit for gating, and read `results` for per-case outcomes. Each strict row has separate `execution`, `evidence`, `security`, and `utility` fields in place of a single legacy `result`.

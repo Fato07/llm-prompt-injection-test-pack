@@ -26,6 +26,10 @@ The reference suite has 12 evaluable cases. Strict mode checks that the evidence
 
 See the [strict evidence format](EVIDENCE.md), [example report](examples/strict-gate.json), and [offline comparison](RELEASE.md).
 
+### Use strict mode in CI
+
+The [offline workflow](.github/workflows/offline.yml) gives the synthetic collector and scorer a fresh run ID from GitHub Actions and fails the job on exit `1` or `2`. Follow the [CI recipe](EVIDENCE.md#ci-recipe) to use saved evidence from your own local test harness. The [pilot packet](PILOT.md) walks through setup, interpretation, and harness integration.
+
 ## Chat diagnostics
 
 For diagnostics on an authorized endpoint that accepts the chat request format, select the model and endpoint explicitly.
