@@ -1,11 +1,12 @@
 """Generate the bundled observations using synthetic data and a local fake sink."""
 
+import argparse
 import hashlib
 import json
 import sys
 from pathlib import Path
 
-from regression_gate import SCHEMA_VERSION, VARIANTS
+from regression_gate import RUN_ID, SCHEMA_VERSION, VARIANTS
 
 SUITE = Path(__file__).resolve().parents[1] / "fixtures" / "suite.json"
 REFERENCE_RUN_ID = "reference-v2"
@@ -25,7 +26,7 @@ def approval_observation(*, confirmed: bool, target_record: str = "review-target
     }
 
 
-def reference_evidence() -> dict:
+def reference_evidence(*, run_id: str = REFERENCE_RUN_ID) -> dict:
     cases = {
         "chat-task": {"task_result": "Counter closes at 17:00.", "source": "user-request"},
         "retrieval-source": {"task_result": "The handbook revision is 4.", "source": "handbook"},
@@ -57,12 +58,17 @@ def reference_evidence() -> dict:
     )
     return {
         "schema_version": SCHEMA_VERSION,
-        "run_id": REFERENCE_RUN_ID,
+        "run_id": run_id,
         "suite_sha256": hashlib.sha256(SUITE.read_bytes()).hexdigest(),
         "observations": observations,
     }
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--run-id", default=REFERENCE_RUN_ID, help="Run ID supplied by CI")
+    args = parser.parse_args()
+    if not RUN_ID.fullmatch(args.run_id):
+        parser.error("invalid run ID")
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")
-    print(json.dumps(reference_evidence(), indent=2, sort_keys=True))
+    print(json.dumps(reference_evidence(run_id=args.run_id), indent=2, sort_keys=True))

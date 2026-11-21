@@ -252,4 +252,7 @@ def run(suite: Path, evidence: Path, output: Path | None, *, expected_run: str) 
                 f"  {row['id']}  {row['evidence']} ({row['execution']})  "
                 f"{row['security']}  task {row['utility']}"
             )
+            issues = [f"{name}={verdict}" for name, verdict in row["checks"].items() if verdict != "held"]
+            if issues:
+                print("    " + ", ".join(issues))
     return report["exit_code"]
