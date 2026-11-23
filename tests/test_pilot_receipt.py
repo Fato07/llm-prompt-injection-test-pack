@@ -12,6 +12,42 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PilotReceiptTests(unittest.TestCase):
+    def test_interrupted_write_can_be_retried(self):
+        def interrupted_dump(receipt, stream, **kwargs):
+            stream.write('{"reference":')
+            raise OSError("simulated write interruption")
+
+        with tempfile.TemporaryDirectory() as directory, patch("builtins.print"):
+            work = Path(directory)
+            with patch.object(record, "WORK", work):
+                with patch.object(record.json, "dump", interrupted_dump):
+                    with self.assertRaisesRegex(OSError, "simulated write interruption"):
+                        record.write_receipt(record.REFERENCE_REVISION)
+
+                self.assertEqual(list(work.iterdir()), [])
+                record.write_receipt(record.REFERENCE_REVISION)
+
+            receipt = json.loads((work / "receipt.json").read_bytes())
+            self.assertEqual(receipt["revision"], record.REFERENCE_REVISION)
+            self.assertEqual([path.name for path in work.iterdir()], ["receipt.json"])
+
+    def test_rerun_preserves_a_completed_receipt(self):
+        with tempfile.TemporaryDirectory() as directory, patch("builtins.print"):
+            work = Path(directory)
+            path = work / "receipt.json"
+            with patch.object(record, "WORK", work):
+                record.write_receipt(record.REFERENCE_REVISION)
+                receipt = json.loads(path.read_bytes())
+                receipt["team_alias"] = "reviewed-example"
+                path.write_text(json.dumps(receipt), encoding="utf-8")
+                completed = path.read_bytes()
+
+                with self.assertRaises(FileExistsError):
+                    record.write_receipt(record.REFERENCE_REVISION)
+
+            self.assertEqual(path.read_bytes(), completed)
+            self.assertEqual([path.name for path in work.iterdir()], ["receipt.json"])
+
     def test_receipt_keeps_partial_coverage_and_omits_raw_observations(self):
         evidence = json.loads((ROOT / "fixtures/observations.json").read_bytes())
         evidence["observations"].pop()
