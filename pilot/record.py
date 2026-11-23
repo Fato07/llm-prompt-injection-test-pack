@@ -3,9 +3,11 @@
 import argparse
 import hashlib
 import json
+import os
 import platform
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -89,9 +91,13 @@ def write_receipt(checkout_revision: str) -> None:
         "export": export,
     }
     path = WORK / "receipt.json"
-    with path.open("x", encoding="utf-8") as file:
-        json.dump(receipt, file, indent=2)
-        file.write("\n")
+    with tempfile.TemporaryDirectory(prefix=".receipt-", dir=WORK) as directory:
+        pending = Path(directory) / path.name
+        with pending.open("x", encoding="utf-8") as file:
+            json.dump(receipt, file, indent=2)
+            file.write("\n")
+        # Publish the finished file atomically while preserving any existing receipt.
+        os.link(pending, path)
     print(f"Fill in the participant fields in {path}.")
 
 

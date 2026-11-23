@@ -4,7 +4,7 @@ One retrieval-app team and one tool-using-agent team complete this packet indepe
 
 ## 1. Set up the pinned preview
 
-Use Git, Python 3.10 or newer and a POSIX shell on macOS, Linux or WSL. In a fresh folder containing this file and the supplied `pilot/` folder, run the block below. The kit contains `pilot/case.json`, `pilot/record.py` and `pilot/example_export.py`. Run every later command from the same folder. You can open a new shell there between steps.
+Use Git, Python 3.10 or newer and a POSIX shell on macOS, Linux or WSL. Use a local filesystem that supports hard links. In a fresh folder containing this file and the supplied `pilot/` folder, run the block below. The kit contains `pilot/case.json`, `pilot/record.py` and `pilot/example_export.py`. Run every later command from the same folder. You can open a new shell there between steps.
 
 ```sh
 (
@@ -90,6 +90,8 @@ The scorer receives the expected ID from `run-id.txt` independently of the saved
 ```sh
 python3 pilot/record.py receipt
 ```
+
+If the write is interrupted, rerun the command. The recorder preserves an existing receipt. If an older kit left a truncated file, move it aside before retrying.
 
 Open `pilot-local/receipt.json` in a text editor. Replace the participant fields using this table. Leave the recorder's report objects, process exits, timings and bindings as generated.
 
