@@ -1,62 +1,103 @@
 # Offline strict gate pilot
 
-Use this same packet with one retrieval-app team and one tool-using-agent team. Each team works independently and returns one receipt. Both teams use the same revision. This packet uses the [published preview](https://github.com/Fato07/llm-prompt-injection-test-pack/releases/tag/v0.1.0-preview.1) at commit `3acc3464725975e668e77ec9cf9cdc0a5563d73a`. For a candidate pilot, the coordinator supplies the same exact candidate revision to both teams.
+One retrieval-app team and one tool-using-agent team complete this packet independently. Each team returns one `receipt.json`. Use only local synthetic tasks, records and observations. This exercise works without model calls, credentials, production data or real tools.
 
-Use Python 3.10 or newer, a shell, and a local copy of the pack. The exercises use synthetic records and saved observations. Keep credentials, production data, and live endpoints out of the exercises.
+## 1. Set up the pinned preview
 
-## 1. Get the first result
-
-Start the timer with the pinned checkout available locally. From its root, run:
+Use Git, Python 3.10 or newer and a POSIX shell on macOS, Linux or WSL. In a fresh folder containing this file and the supplied `pilot/` folder, run the block below. The kit contains `pilot/case.json`, `pilot/record.py` and `pilot/example_export.py`. Run every later command from the same folder. You can open a new shell there between steps.
 
 ```sh
-pilot_dir=$(mktemp -d "${TMPDIR:-/tmp}/strict-pilot.XXXXXXXX")
-python3 run_probes.py --strict --suite fixtures/suite.json \
-  --evidence fixtures/observations.json --expect-run reference-v2 \
-  --json-out "$pilot_dir/reference.json"
+(
+  set -eu
+  python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else "Python 3.10 or newer is required.")'
+  git -c advice.detachedHead=false clone --quiet --depth 1 --single-branch \
+    --branch v0.1.0-preview.1 https://github.com/Fato07/llm-prompt-injection-test-pack.git preview
+  expected_sha=3acc3464725975e668e77ec9cf9cdc0a5563d73a
+  actual_sha=$(git -C preview rev-parse HEAD)
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    printf 'Preview commit mismatch.\nExpected commit %s\nActual commit   %s\n' \
+      "$expected_sha" "$actual_sha" >&2
+    exit 1
+  fi
+  mkdir -m 700 pilot-local
+  python3 pilot/record.py start
+)
 ```
 
-Stop the timer when you can confirm the process exited `0` and the report has 12/12 evaluable cases. The target is five minutes. Record actual time and the first place you got stuck, including setup or documentation.
+Git fetches the public checkout during setup. All scoring and example exports after setup are local. If setup fails before the receipt command can run, write a minimal `receipt.json` with `kind`, `team_alias`, `team_role`, the attempted `revision`, and an `onboarding_blocker` describing the failing prerequisite. See step 5 for field values. For a retry, start from a fresh copy of the kit. Keep the preview checkout unchanged.
 
-## 2. Explain one regression
-
-Generate a separate evidence file for the bundled fake approval workflow. Use the resulting report to diagnose the regression.
+## 2. Get the first result
 
 ```sh
-python3 - "$pilot_dir/approval-observations.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-from examples.reference_evidence import approval_observation, reference_evidence
-
-evidence = reference_evidence()
-observed = next(row for row in evidence["observations"] if row["id"] == "approval/clean")
-observed.update(approval_observation(confirmed=True, target_record="other-review"))
-Path(sys.argv[1]).write_text(json.dumps(evidence), encoding="utf-8")
-PY
-approval_status=0
-python3 run_probes.py --strict --suite fixtures/suite.json \
-  --evidence "$pilot_dir/approval-observations.json" --expect-run reference-v2 \
-  --json-out "$pilot_dir/approval-report.json" || approval_status=$?
-printf 'Gate exit %s\n' "$approval_status"
+python3 pilot/record.py reference
 ```
 
-Open `approval-report.json`. In one or two sentences, explain the exit, whether the task completed, and which policy check failed. Use the report fields to support your answer.
+The timer started at the end of step 1 and stops when the recorder reads the fresh strict report. Clone and prerequisite setup are outside the five-minute target. Confirm gate exit `0` and `12/12` evaluable. The recorder saves elapsed nanoseconds, the gate's process exit, and the report for the receipt. A partial run should still be reported. The command prints the gate exit separately from the recorder's own exit.
 
-## 3. Export from your own harness
+## 3. Explain the diagnosis case
 
-Create one clean and challenged pair using your existing local test harness and dummy records. Choose one boundary you can actually observe. A retrieval app can record a synthetic source label and a task result. A tool-using agent can record a decision and a snapshot from its in-memory fake sink. Use the [v2 evidence format](https://github.com/Fato07/llm-prompt-injection-test-pack/blob/v0.1.0-preview.1/EVIDENCE.md) to define the suite and save the observations.
+```sh
+python3 pilot/record.py diagnosis
+```
 
-Have the harness or CI orchestrator choose a fresh synthetic run ID before collection. Pass it to the collector and to `--expect-run` independently. Write the digest of the exact suite bytes at collection time. Score the result with strict mode and a fresh local report path. Record the outcome, the first integration blocker, and how much custom code the export took.
+Open `pilot-local/diagnosis-report.json` in a text editor. Use the report alone. Record the gate exit, case ID, task outcome from `utility`, failed assertion name from `checks`, and a one- or two-sentence explanation tying those fields together. Leave the supplied input file closed during the exercise.
 
-## Team receipt
+## 4. Export a synthetic pair
 
-Copy this table once per team. Keep the evidence files local. Share the receipt and, where useful, the strict report after checking that all run and case labels are synthetic. Delete the temporary files when finished.
+Have your local orchestrator create the run ID before collecting observations:
 
-| Field | Result |
+```sh
+python3 -c 'from uuid import uuid4; print("pilot-" + uuid4().hex)' > pilot-local/run-id.txt
+```
+
+Choose a route in this folder:
+
+- **Own harness.** Use one workflow or adapter you already own and dummy data. Set synthetic expectations in `pilot-local/suite.json` before execution. Run a clean and a challenged variant, then emit the observations to `pilot-local/observations.json`. A retrieval app can record an allowed dummy document's source label when other dummy sources are present. A tool-using agent can record an approval decision and inspect an in-memory fake sink after approval and denial. In both roles, record the actual workflow task result and the fields below. If adapting the example, write a collector against your own harness so the observations come from that harness.
+- **Example.** Use the command for your role to see the export format with a complete dummy run. Use a fresh kit folder to attempt an own-harness run after practicing with an example.
+- **Blocked.** Skip scoring if you could not write both inputs. Return the receipt with the export blocker, including the first step you could not complete.
+
+Example for the retrieval-app team:
+
+```sh
+python3 pilot/example_export.py retrieval-app
+```
+
+Example for the tool-using-agent team:
+
+```sh
+python3 pilot/example_export.py tool-using-agent
+```
+
+Use this contract for your own harness:
+
+| File | Required content |
 | --- | --- |
-| Team type, tested revision, Python version | |
-| Elapsed time to first valid score, exit, and evaluable count | |
-| First onboarding blocker or unclear instruction | |
-| Regression explanation, citing report fields | |
-| Own-harness export attempted and completed, gate exit, and evaluable count | |
-| First integration blocker and approximate export effort | |
+| `pilot-local/suite.json` | `schema_version` of `2` and a `pairs` array. Each pair has a unique lowercase ID such as `sample-pair`, one expected nonblank `task_result` shared by both variants, and `clean` and `challenged` assertion objects. Retrieval assertions can use `source`. Approval assertions can use `decision` and `sink_state`. |
+| `pilot-local/observations.json` | `schema_version` of `2`, `run_id` read from `run-id.txt`, a lowercase SHA-256 `suite_sha256` of the exact suite bytes, and an `observations` array. Each row has `id` such as `sample-pair/clean`, `status` of `complete` or `error`, the actual `task_result`, and the values observed for the assertions. |
+
+For a retrieval example, a row observes the label in `source` and the returned dummy task output in `task_result`. For a fake approval, record `allow` or `deny` in `decision`, inspect the sink, and record its actual record-to-value object in `sink_state`. An inspected empty sink is `{}`. The pinned checkout's `preview/EVIDENCE.md` documents all supported fields.
+
+When both files exist, run:
+
+```sh
+python3 pilot/record.py export
+```
+
+The scorer receives the expected ID from `run-id.txt` independently of the saved evidence. Exit `0` is a complete pass, exit `1` is a complete scored regression, and exit `2` signals invalid, mismatched or incomplete input or a report failure. Keep the receipt even if the export is partial or invalid.
+
+## 5. Return one receipt
+
+```sh
+python3 pilot/record.py receipt
+```
+
+Open `pilot-local/receipt.json` in a text editor. Replace the participant fields using this table. Leave the recorder's report objects, process exits, timings and bindings as generated.
+
+| Field | What to report |
+| --- | --- |
+| `kind`, `team_alias`, `team_role` | Use `independent-pilot` for an actual team run or `local-rehearsal` for a practice run. Use a distinct, non-sensitive alias for each team. Set the role to `retrieval-app` or `tool-using-agent`. |
+| `worked_without_coaching`, `onboarding_blocker` | Set the first field to `true` or `false`. Describe where you first got stuck, including setup, or leave the blocker as `null`. |
+| `diagnosis.*` | Fill the observed gate exit as a number, case ID, task outcome, failed assertion, and your explanation from step 3. |
+| `export.source`, `export.collection_boundary`, `export.blocker` | Keep `example` for the bundled example or choose `own-harness` or `blocked`. Describe the local component and boundary you observed in one sentence. Include the first integration blocker or leave it as `null`. |
+
+If a step could not be completed, keep its missing fields as `null` and describe the blocker. Return only `receipt.json` after confirming all labels and free text are safe to share. The recorder includes sanitized reports and binding metadata. Keep suite inputs, observations, task text and sink values local. Remove the temporary folder once you have saved the receipt.
