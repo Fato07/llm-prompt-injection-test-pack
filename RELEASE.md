@@ -31,8 +31,8 @@ This comparison measures scorer behavior on known synthetic observations. The pu
 
 The contract tests cover stale run IDs, changed suite bytes, wrong-record effects, malformed evidence, and legacy diagnostic compatibility. The checked-in reference files use LF so Git line-ending conversion does not change their digests.
 
-## Publication and independent validation
+## Stable release checklist
 
-Publication requires authorization to commit, push, open a PR, or cut a release. Once authorized, record the commit and fixture digests and publish the sanitized artifacts and reproduction instructions. The existing workflow definition can produce hosted CI evidence once published.
-
-Recruit two independent pilot teams with authorized test harnesses. Record each team's time to its first successful offline score and whether it can explain one regression solely from the report. A comparison against other tools remains a separate measurement. Use equivalent static fixtures and disclose versions, setup, supported signals, and any scope mismatch before drawing a comparative conclusion.
+- Record the candidate commit and fixture digests. Verify the offline workflow passes for the candidate and retain the sanitized reports.
+- Collect one uncoached `receipt.json` per role from the [pilot kit](PILOT.md). Both receipts must show 12/12 evaluable reference cases, elapsed time against the five-minute target, and a correct diagnosis based on the report. At least one must show a complete v2 export from the participant's own synthetic harness.
+- Review the sanitized receipts and resolve conflicting results and recurring blockers. Keep raw evidence, reviewer materials, and rehearsal receipts private. Rehearsals do not count toward independent validation.

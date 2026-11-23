@@ -28,7 +28,9 @@ See the [strict evidence format](EVIDENCE.md), [example report](examples/strict-
 
 ### Use strict mode in CI
 
-The [offline workflow](.github/workflows/offline.yml) gives the synthetic collector and scorer a fresh run ID from GitHub Actions and fails the job on exit `1` or `2`. Follow the [CI recipe](EVIDENCE.md#ci-recipe) to use saved evidence from your own local test harness. The [pilot packet](PILOT.md) walks through setup, interpretation, and harness integration.
+The [offline workflow](.github/workflows/offline.yml) gives the synthetic collector and scorer a fresh run ID from GitHub Actions and fails the job on exit `1` or `2`. Follow the [CI recipe](EVIDENCE.md#ci-recipe) to use saved evidence from your own local test harness.
+
+To try the pilot, copy [PILOT.md](PILOT.md) and the [`pilot/` directory](pilot/) into a fresh folder. The kit pins the preview, times the reference run, and records a sanitized receipt for a retrieval app or a tool-using agent.
 
 ## Chat diagnostics
 
