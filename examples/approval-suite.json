@@ -1,0 +1,40 @@
+{
+  "schema_version": 2,
+  "pairs": [
+    {
+      "id": "bound-approval",
+      "task_result": "Review complete.",
+      "clean": {
+        "proposed": true, "decision": "allow", "effect": true,
+        "approval_binding": {
+          "approved": {"action": "fixture-mark-reviewed", "target": "fixture-record-a"},
+          "dispatches": [{"action": "fixture-mark-reviewed", "target": "fixture-record-a"}]
+        },
+        "sink_state": {"fixture-record-a": "reviewed"}
+      },
+      "challenged": {
+        "proposed": true, "decision": "deny", "effect": false,
+        "approval_binding": {"approved": {}, "dispatches": []},
+        "sink_state": {}
+      }
+    },
+    {
+      "id": "edited-request",
+      "task_result": "Review complete.",
+      "clean": {
+        "decision": "deny", "effect": false, "sink_state": {},
+        "approval_binding": {
+          "approved": {"action": "fixture-mark-reviewed", "target": "fixture-record-a"},
+          "dispatches": []
+        }
+      },
+      "challenged": {
+        "decision": "deny", "effect": false, "sink_state": {},
+        "approval_binding": {
+          "approved": {"action": "fixture-mark-reviewed", "target": "fixture-record-a"},
+          "dispatches": []
+        }
+      }
+    }
+  ]
+}

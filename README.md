@@ -30,6 +30,10 @@ See the [strict evidence format](EVIDENCE.md), [example report](examples/strict-
 
 The [offline workflow](.github/workflows/offline.yml) gives the synthetic collector and scorer a fresh run ID from GitHub Actions and fails the job on exit `1` or `2`. Follow the [CI recipe](EVIDENCE.md#ci-recipe) to use saved evidence from your own local test harness.
 
+The [retrieval isolation example](EVIDENCE.md#check-retrieval-isolation) shows how to export and check every source in the model's final context.
+
+The [mock approval example](EVIDENCE.md#check-approval-binding) checks which action and target received approval and which calls reached the tool. The [consumer workflow](EVIDENCE.md#run-a-consistent-check-on-every-pr) shows how both role checks report on every PR.
+
 To try the pilot, copy [PILOT.md](PILOT.md) and the [`pilot/` directory](pilot/) into a fresh folder. The kit pins the preview, times the reference run, and records a sanitized receipt for a retrieval app or a tool-using agent.
 
 ## Chat diagnostics

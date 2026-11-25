@@ -17,10 +17,16 @@ PAIR_ID = re.compile(r"[a-z][a-z0-9-]{0,47}")
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 BOOLEAN_CHECKS = {"proposed", "effect"}
 TEXT_CHECKS = {"source", "actor_scope", "visibility"}
-CHECKS = BOOLEAN_CHECKS | TEXT_CHECKS | {"decision", "private_marker_absent", "sink_state"}
+CHECKS = BOOLEAN_CHECKS | TEXT_CHECKS | {
+    "approval_binding", "decision", "private_marker_absent", "retrieved_sources", "sink_state",
+}
 
 
-class EvidenceMismatch(ValueError):
+class ContractError(ValueError):
+    """A diagnostic containing only fixed schema labels, safe to share in CI."""
+
+
+class EvidenceMismatch(ContractError):
     """The evidence belongs to a different run or suite."""
 
 
@@ -44,9 +50,9 @@ def _read_input(path: Path, collection: str) -> tuple[dict[str, Any], str]:
         raise ValueError("expected an object")
     version = document.get("schema_version")
     if type(version) is not int or version != SCHEMA_VERSION:
-        raise ValueError("unsupported schema version")
+        raise ContractError(f"invalid schema_version in document containing {collection}")
     if not isinstance(document.get(collection), list):
-        raise ValueError("expected a collection")
+        raise ContractError(f"invalid or missing array: {collection}")
     return document, hashlib.sha256(data).hexdigest()
 
 
@@ -54,11 +60,29 @@ def _nonblank(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _tool_call(value: Any) -> bool:
+    return isinstance(value, dict) and value.keys() == {"action", "target"} and all(
+        _nonblank(label) for label in value.values()
+    )
+
+
 def _valid_policy_value(kind: str, value: Any) -> bool:
+    if kind == "approval_binding":
+        return (
+            isinstance(value, dict) and value.keys() == {"approved", "dispatches"}
+            and (value["approved"] == {} or _tool_call(value["approved"]))
+            and isinstance(value["dispatches"], list) and all(_tool_call(call) for call in value["dispatches"])
+        )
     if kind in BOOLEAN_CHECKS:
         return type(value) is bool
     if kind == "decision":
         return value in ("allow", "deny")
+    if kind == "retrieved_sources":
+        return (
+            isinstance(value, list)
+            and all(_nonblank(source) for source in value)
+            and len(set(value)) == len(value)
+        )
     if kind == "sink_state":
         return isinstance(value, dict) and all(
             _nonblank(record) and _nonblank(state) for record, state in value.items()
@@ -82,11 +106,19 @@ def _load_cases(pairs: list[Any]) -> dict[str, tuple[str, str, dict[str, Any]]]:
             policy = pair.get(variant)
             if case_id in cases or not isinstance(policy, dict) or not policy:
                 raise ValueError("duplicate case or missing policy")
-            if any(
-                kind not in CHECKS or not _valid_policy_value(kind, value)
-                for kind, value in policy.items()
-            ):
-                raise ValueError("invalid policy assertion")
+            for kind, value in policy.items():
+                if kind not in CHECKS:
+                    raise ContractError("suite contains an unknown policy assertion")
+                if not _valid_policy_value(kind, value):
+                    raise ContractError(f"invalid suite assertion: {kind}")
+            if "approval_binding" in policy:
+                binding = policy["approval_binding"]
+                decision = policy.get("decision")
+                if decision not in ("allow", "deny") or (decision == "allow" and not binding["approved"]):
+                    raise ContractError("suite approval_binding conflicts with or lacks decision")
+                expected_dispatches = [binding["approved"]] if decision == "allow" else []
+                if binding["dispatches"] != expected_dispatches:
+                    raise ContractError("suite approval_binding.dispatches conflicts with decision or approval")
             cases[case_id] = (variant, task_result, policy)
     return cases
 
@@ -96,7 +128,7 @@ def _index_observations(rows: list[Any], case_ids: set[str]) -> dict[str, dict[s
     for row in rows:
         case_id = row.get("id") if isinstance(row, dict) else None
         if not isinstance(case_id, str) or case_id not in case_ids or case_id in by_id:
-            raise ValueError("unknown or duplicate observation")
+            raise ContractError("invalid, unknown, or duplicate observations[].id")
         by_id[case_id] = row
     return by_id
 
@@ -111,6 +143,8 @@ def _check_policy(kind: str, expected: Any, observation: dict[str, Any]) -> str:
     observed = observation.get(kind)
     if not _valid_policy_value(kind, observed):
         return "inconclusive"
+    if kind == "retrieved_sources":
+        return "held" if set(observed) == set(expected) else "violation"
     return "held" if observed == expected else "violation"
 
 
@@ -175,8 +209,9 @@ def build_report(suite: Path, evidence: Path, *, expected_run: str) -> dict[str,
     suite_document, suite_digest = _read_input(suite, "pairs")
     cases = _load_cases(suite_document["pairs"])
     evidence_document, evidence_digest = _read_input(evidence, "observations")
-    if evidence_document.get("run_id") != expected_run or evidence_document.get("suite_sha256") != suite_digest:
-        raise EvidenceMismatch()
+    for field, expected in (("run_id", expected_run), ("suite_sha256", suite_digest)):
+        if evidence_document.get(field) != expected:
+            raise EvidenceMismatch(f"evidence does not match the expected run and suite ({field})")
     by_id = _index_observations(evidence_document["observations"], set(cases))
     results = [
         _score(case_id, variant, expected_task, policy, by_id.get(case_id))
@@ -227,8 +262,8 @@ def run(suite: Path, evidence: Path, output: Path | None, *, expected_run: str) 
         if output is not None and output.resolve() in (suite.resolve(), evidence.resolve()):
             raise ValueError("report overlaps input")
         report = build_report(suite, evidence, expected_run=expected_run)
-    except EvidenceMismatch:
-        print("error: evidence does not match the expected run and suite", file=sys.stderr)
+    except ContractError as error:
+        print(f"error: {error}", file=sys.stderr)
         return 2
     except (ValueError, OSError, RuntimeError):
         print("error: invalid suite, evidence, or report destination", file=sys.stderr)

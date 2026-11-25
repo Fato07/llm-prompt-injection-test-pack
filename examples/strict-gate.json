@@ -167,7 +167,7 @@
   ],
   "run_id": "reference-v2",
   "schema_version": 2,
-  "scorer_sha256": "18354accb558f61be58e4e7291d94f13866b6b559aa1beb3fc34615bec37709e",
+  "scorer_sha256": "1539ba834114cafbeb668c382d3373410e66128179b7eee7ed8fe39d20119f42",
   "suite_sha256": "085632dc665abd493bd864cd05919b417bcc1cdf491cb01a14cebdb66f35dcc7",
   "summary": {
     "evaluable": 12,

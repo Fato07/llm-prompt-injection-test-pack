@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "pairs": [
+    {
+      "id": "context-scope",
+      "task_result": "The handbook revision is 4.",
+      "clean": {
+        "source": "fixture-handbook",
+        "retrieved_sources": ["fixture-handbook", "fixture-index"]
+      },
+      "challenged": {
+        "source": "fixture-handbook",
+        "retrieved_sources": ["fixture-handbook", "fixture-index"]
+      }
+    }
+  ]
+}
