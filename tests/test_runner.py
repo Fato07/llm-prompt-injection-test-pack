@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import regression_gate
 import run_probes
+from examples import approval_evidence, retrieval_evidence
 from examples.reference_evidence import REFERENCE_RUN_ID, approval_observation, reference_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +67,138 @@ class StrictGateTests(unittest.TestCase):
         first = self.output.read_bytes()
         self.assertEqual(self.run_gate()[0], 0)
         self.assertEqual(self.output.read_bytes(), first)
+
+    def test_retrieval_isolation_compares_the_whole_unordered_source_set(self):
+        with patch.object(retrieval_evidence, "mock_answer", wraps=retrieval_evidence.mock_answer) as answer:
+            self.observations = retrieval_evidence.collect_evidence(REFERENCE_RUN_ID)
+        self.assertEqual(answer.call_count, 2)
+        for invocation, row in zip(answer.call_args_list, self.observations["observations"]):
+            context = invocation.args[0]
+            self.assertEqual({record[1] for record in context}, {"fixture-tenant-a"})
+            self.assertEqual(set(row["retrieved_sources"]), {record[0] for record in context})
+        row = self.observation("context-scope/challenged")
+        row["retrieved_sources"].reverse()
+        self.assertEqual(self.run_gate(suite=retrieval_evidence.SUITE)[0], 0)
+
+        row["retrieved_sources"].append("fixture-other-scope")
+        status, terminal = self.run_gate(suite=retrieval_evidence.SUITE)
+        self.assertEqual(status, 1)
+        result = self.report()["results"][1]
+        self.assertEqual(result["id"], row["id"])
+        self.assertEqual(result["utility"], "completed")
+        self.assertEqual(result["security"], "violation")
+        self.assertEqual(result["checks"], {"source": "held", "retrieved_sources": "violation"})
+        self.assertIn("retrieved_sources=violation", terminal)
+        for label in row["retrieved_sources"]:
+            self.assertNotIn(label, terminal + self.output.read_text(encoding="utf-8"))
+        row["retrieved_sources"] = ["fixture-handbook"]
+        self.assertEqual(self.run_gate(suite=retrieval_evidence.SUITE)[0], 1)
+
+    def test_retrieval_isolation_requires_a_complete_source_set(self):
+        self.observations = retrieval_evidence.collect_evidence(REFERENCE_RUN_ID)
+        row = self.observation("context-scope/challenged")
+        del row["retrieved_sources"]
+        for invalid in (None, "fixture-handbook", ["fixture-handbook", "fixture-handbook"], [" "], [{}]):
+            with self.subTest(invalid=invalid):
+                if invalid is not None:
+                    row["retrieved_sources"] = invalid
+                self.assertEqual(self.run_gate(suite=retrieval_evidence.SUITE)[0], 2)
+                result = self.report()["results"][1]
+                self.assertEqual(result["evidence"], "incomplete")
+                self.assertEqual(result["checks"]["retrieved_sources"], "inconclusive")
+
+        suite = self.directory / "no-context.json"
+        document = json.loads(retrieval_evidence.SUITE.read_bytes())
+        document["pairs"][0]["challenged"] = {"retrieved_sources": []}
+        suite.write_text(json.dumps(document), encoding="utf-8")
+        self.observations["suite_sha256"] = hashlib.sha256(suite.read_bytes()).hexdigest()
+        row["retrieved_sources"] = []
+        self.assertEqual(self.run_gate(suite=suite)[0], 0)
+
+    def test_retrieval_isolation_and_mock_approval_are_independent_of_the_reply(self):
+        suite = self.directory / "boundaries.json"
+        document = json.loads(retrieval_evidence.SUITE.read_bytes())
+        document["pairs"].extend(
+            pair for pair in json.loads(SUITE.read_bytes())["pairs"] if pair["id"] == "approval"
+        )
+        suite.write_text(json.dumps(document), encoding="utf-8")
+        suite_sha256 = hashlib.sha256(suite.read_bytes()).hexdigest()
+        for abstain in (False, True):
+            with self.subTest(abstain=abstain):
+                response = (
+                    patch("examples.retrieval_evidence.mock_answer", return_value="Summary unavailable.")
+                    if abstain else contextlib.nullcontext()
+                )
+                with response:
+                    self.observations = retrieval_evidence.collect_evidence(REFERENCE_RUN_ID)
+                self.observations["suite_sha256"] = suite_sha256
+                for variant in regression_gate.VARIANTS:
+                    approval = approval_observation(confirmed=variant == "clean")
+                    if abstain:
+                        approval["task_result"] = "Summary unavailable."
+                    self.observations["observations"].append({"id": f"approval/{variant}", **approval})
+                self.assertEqual(self.run_gate(suite=suite)[0], 1 if abstain else 0)
+                report = self.report()
+                self.assertEqual(report["summary"]["evaluable"], 4)
+                self.assertEqual(report["summary"]["task_failed"], 4 if abstain else 0)
+                for row in report["results"]:
+                    self.assertEqual(row["security"], "no_violation_observed")
+                    self.assertEqual(set(row["checks"].values()), {"held"})
+
+    def test_approval_binding_requires_the_granted_action_and_target_at_dispatch(self):
+        self.observations = approval_evidence.collect_evidence(REFERENCE_RUN_ID)
+        suite = approval_evidence.SUITE
+        self.assertEqual(self.run_gate(suite=suite)[0], 0)
+        self.assertEqual(self.report()["summary"]["secure_tasks_completed"], 4)
+        binding = self.observation("bound-approval/clean")["approval_binding"]
+        granted = binding["approved"]
+        for field, replacement in (("action", "fixture-archive"), ("target", "fixture-record-b")):
+            changed = {**granted, field: replacement}
+            self.assertEqual(approval_evidence.observe(changed, changed)["approval_binding"]["dispatches"], [changed])
+            denied = approval_evidence.observe(granted, changed)
+            self.assertEqual(denied["approval_binding"]["dispatches"], [])
+            self.assertEqual(denied["sink_state"], {})
+        for calls in ([], [granted, granted], [{**granted, "action": "fixture-archive"}],
+                      [{**granted, "target": "fixture-record-b"}]):
+            with self.subTest(calls=calls):
+                binding["dispatches"] = calls
+                status, terminal = self.run_gate(suite=suite)
+                self.assertEqual(status, 1)
+                self.assertIn("approval_binding=violation", terminal)
+                self.assertEqual(self.report()["results"][0]["checks"]["sink_state"], "held")
+                shared = terminal + self.output.read_text()
+                for value in ("fixture-archive", "fixture-record-a", "fixture-record-b", "fixture-mark-reviewed"):
+                    self.assertNotIn(value, shared)
+        binding["dispatches"] = [granted]
+        binding["approved"] = {**granted, "action": "fixture-archive"}
+        self.assertEqual(self.run_gate(suite=suite)[0], 1)
+        binding["approved"] = granted
+        denied = self.observation("bound-approval/challenged")["approval_binding"]
+        denied["dispatches"].append(granted)
+        self.assertEqual(self.run_gate(suite=suite)[0], 1)
+        self.assertEqual(self.report()["results"][1]["checks"]["approval_binding"], "violation")
+
+    def test_approval_binding_requires_both_captures_and_consistent_expectations(self):
+        self.observations = approval_evidence.collect_evidence(REFERENCE_RUN_ID)
+        row = self.observation("bound-approval/challenged")
+        for partial in ({}, {"approved": {}}, {"dispatches": []}, {"approved": {}, "dispatches": None},
+                        {"approved": {"action": "fixture-only"}, "dispatches": []}):
+            with self.subTest(partial=partial):
+                row["approval_binding"] = partial
+                status, terminal = self.run_gate(suite=approval_evidence.SUITE)
+                self.assertEqual(status, 2)
+                self.assertIn("approval_binding=inconclusive", terminal)
+        suite = self.directory / "bad-suite.json"
+        document = json.loads(approval_evidence.SUITE.read_bytes())
+        document["pairs"][0]["clean"]["approval_binding"]["dispatches"][0]["target"] = "other-target"
+        suite.write_text(json.dumps(document))
+        self.observations["suite_sha256"] = hashlib.sha256(suite.read_bytes()).hexdigest()
+        self.output.unlink()
+        status, terminal = self.run_gate(suite=suite)
+        self.assertEqual(status, 2)
+        self.assertIn("approval_binding.dispatches", terminal)
+        self.assertNotIn("other-target", terminal)
+        self.assertFalse(self.output.exists())
 
     def test_task_failure_and_unauthorized_effect_are_independent(self):
         self.observation("chat-task/challenged")["task_result"] = "Unrelated result"
@@ -151,13 +284,18 @@ class StrictGateTests(unittest.TestCase):
 
     def test_evidence_must_match_the_independently_expected_run_and_suite(self):
         self.assertEqual(self.run_gate(expected_run=None)[0], 2)
-        self.assertEqual(self.run_gate(expected_run="new-build-run")[0], 2)
+        status, terminal = self.run_gate(expected_run="new-build-run")
+        self.assertEqual(status, 2)
+        self.assertIn("run_id", terminal)
+        self.assertNotIn("new-build-run", terminal)
         del self.observations["run_id"]
         self.assertEqual(self.run_gate()[0], 2)
         self.observations["run_id"] = REFERENCE_RUN_ID
         suite = self.directory / "changed-suite.json"
         suite.write_bytes(SUITE.read_bytes() + b"\n")
-        self.assertEqual(self.run_gate(suite=suite)[0], 2)
+        status, terminal = self.run_gate(suite=suite)
+        self.assertEqual(status, 2)
+        self.assertIn("suite_sha256", terminal)
         self.assertFalse(self.output.exists())
 
     def test_invalid_report_destination_fails_closed(self):
